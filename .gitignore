@@ -205,3 +205,31 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Project-specific
+# Data files
+data/raw/*.csv
+data/raw/*.json
+data/processed/*.parquet
+data/processed/*.csv
+
+# Model files
+data/models/*.pkl
+data/models/*.joblib
+data/models/*.h5
+
+# Docker volumes
+docker-volumes/
+
+# Spark checkpoints and temp files
+checkpoints/
+spark-warehouse/
+metastore_db/
+derby.log
+
+# Kafka data
+kafka-logs/
+
+# Jupyter notebook outputs (keep notebooks, ignore outputs)
+*.ipynb
+!notebooks/*.ipynb
