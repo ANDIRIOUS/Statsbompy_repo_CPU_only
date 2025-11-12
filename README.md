@@ -2,27 +2,28 @@
 ## Análisis en Tiempo Real de Datos de Fútbol con Spark Streaming y Kafka
 
 [![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/)
-[![Spark](https://img.shields.io/badge/Spark-3.5.0-orange.svg)](https://spark.apache.org/)
+[![Spark](https://img.shields.io/badge/Apache%20Spark-3.5.0-orange.svg)](https://spark.apache.org/)
 [![Kafka](https://img.shields.io/badge/Kafka-7.5.0-black.svg)](https://kafka.apache.org/)
+[![Docker](https://img.shields.io/badge/Docker-Compose-blue.svg)](https://www.docker.com/)
 
 ---
 
 ## Descripción del Proyecto
 
-Este proyecto implementa un sistema completo de procesamiento de datos en tiempo real utilizando **Apache Spark Structured Streaming** y **Apache Kafka** para analizar eventos de partidos de fútbol de La Liga (Statsbomb).
+Sistema completo de procesamiento de datos en tiempo real usando **Apache Spark Structured Streaming** y **Apache Kafka** para analizar eventos de partidos de fútbol de La Liga (datos de Statsbomb).
 
 ### Características Principales
 
-- **Simulación de streaming en tiempo real** de eventos de partidos
-- **Procesamiento distribuido** con Apache Spark
-- **Cálculo de estadísticas en tiempo real**:
-  - Posesión del balón por equipo (ventanas de 5 minutos)
+- Simulación de streaming en tiempo real de eventos deportivos
+- Procesamiento distribuido con Apache Spark
+- Cálculo de estadísticas en tiempo real (ventanas de 5 minutos):
+  - Posesión del balón por equipo
   - Expected Goals (xG) promedio
   - Porcentaje de pases completados
-- **Machine Learning** para predicción de resultados de partidos
-- **Inferencia en tiempo real** integrada al streaming
-- **Almacenamiento en formato Parquet** para análisis histórico
-- **Comparación de rendimiento** entre diferentes arquitecturas de hardware
+- Machine Learning para predicción de resultados
+- Inferencia en tiempo real integrada
+- Almacenamiento en formato Parquet
+- Comparación de rendimiento entre arquitecturas de hardware
 
 ---
 
@@ -112,7 +113,7 @@ no_cuda/
 
 ```bash
 git clone <repository-url>
-cd no_cuda
+cd noCUDA
 ```
 
 ### 2. Configurar Variables de Entorno (Opcional)
@@ -125,14 +126,14 @@ cp .env.example .env
 ### 3. Construir y Levantar el Entorno
 
 ```bash
-# Construir las imágenes
-docker-compose build
+# Construir las imágenes (puede tardar 5-10 minutos la primera vez)
+docker compose build
 
 # Levantar todos los servicios
-docker-compose up -d
+docker compose up -d
 
 # Verificar que todos los servicios estén corriendo
-docker-compose ps
+docker compose ps
 ```
 
 **Servicios levantados**:
@@ -146,12 +147,14 @@ docker-compose ps
 
 ```bash
 # Ver logs de todos los servicios
-docker-compose logs -f
+docker compose logs -f
 
 # Ver logs de un servicio específico
-docker-compose logs -f kafka
-docker-compose logs -f spark-master
+docker compose logs -f spark-master
+docker compose logs -f spark-worker
 ```
+
+> **Nota**: Si encuentras problemas durante el build, consulta la sección [Troubleshooting](#troubleshooting) más abajo.
 
 ---
 
@@ -239,12 +242,12 @@ Este script:
 Verás tablas actualizándose con estadísticas como:
 
 ```
-+-------------------+-------------------+-----------+--------------------+
-|window_start       |window_end         |team_name  |possession_percentage|
-+-------------------+-------------------+-----------+--------------------+
-|2025-11-11 10:00:00|2025-11-11 10:05:00|Barcelona  |62.5                |
-|2025-11-11 10:00:00|2025-11-11 10:05:00|Real Madrid|37.5                |
-+-------------------+-------------------+-----------+--------------------+
++-------------------+-------------------+-----------------+-----------------+
+|window_start       |window_end         |team_name        |possession_count |
++-------------------+-------------------+-----------------+-----------------+
+|2025-11-11 10:00:00|2025-11-11 10:05:00|Barcelona        |125              |
+|2025-11-11 10:00:00|2025-11-11 10:05:00|Real Madrid      |75               |
++-------------------+-------------------+-----------------+-----------------+
 ```
 
 #### En la Spark UI (http://localhost:4040):
@@ -449,35 +452,85 @@ MATCH_LIMIT=5    # número de partidos
 
 ## Troubleshooting
 
+### Problema: Error al construir la imagen Docker
+
+**Error**: `failed to resolve source metadata for docker.io/bitnami/spark:3.5.0: not found`
+
+**Solución**: Este proyecto ahora usa la imagen oficial `apache/spark:3.5.0`. Si ves este error:
+
+```bash
+# Limpiar cache de Docker
+docker system prune -a
+
+# Reconstruir desde cero
+docker compose build --no-cache
+
+# Si estás en WSL2 o necesitas especificar la plataforma:
+docker compose build --no-cache --platform linux/amd64
+```
+
+**Causa**: El proyecto fue actualizado de Bitnami Spark a Apache Spark oficial para mejor compatibilidad.
+
+---
+
+### Problema: "platform not supported" o errores en arquitectura ARM
+
+Si estás en Apple Silicon (M1/M2/M3) o ves errores de plataforma:
+
+```bash
+# El docker-compose.yml ya incluye platform: linux/amd64
+# Pero puedes forzarlo manualmente:
+export DOCKER_DEFAULT_PLATFORM=linux/amd64
+docker compose build --no-cache
+```
+
+---
+
 ### Problema: Kafka no se conecta
 
 ```bash
 # Verificar que Kafka esté corriendo
-docker-compose logs kafka
+docker compose logs kafka
 
 # Reiniciar Kafka
-docker-compose restart kafka
+docker compose restart kafka
+
+# Verificar que el topic existe
+docker exec -it kafka kafka-topics --list --bootstrap-server localhost:9092
 ```
+
+---
 
 ### Problema: Spark no encuentra el Master
 
 ```bash
 # Verificar que Spark Master esté levantado
-docker-compose logs spark-master
+docker compose logs spark-master
 
 # Verificar la URL del master
 docker exec -it pyspark-app env | grep SPARK_MASTER
+
+# Debería mostrar: SPARK_MASTER=spark://spark-master:7077
 ```
+
+**Acceder a Spark Master UI**: http://localhost:8080
+
+---
 
 ### Problema: Errores de memoria en Spark
 
-Ajustar en `docker-compose.yml`:
+Si ves errores como "Java heap space" o "Container killed by YARN":
+
+Ajustar en [docker-compose.yml](docker-compose.yml):
 
 ```yaml
 spark-worker:
   environment:
-    - SPARK_WORKER_MEMORY=4G  # Aumentar si es posible
+    - SPARK_WORKER_MEMORY=4G  # Aumentar si tu máquina tiene suficiente RAM
+    - SPARK_WORKER_CORES=4    # Ajustar según tus cores disponibles
 ```
+
+---
 
 ### Problema: Producer no encuentra datos de Statsbomb
 
@@ -487,16 +540,59 @@ docker exec -it pyspark-app ping -c 3 google.com
 
 # Verificar instalación de statsbombpy
 docker exec -it pyspark-app pip show statsbombpy
+
+# Si falla, reinstalar:
+docker exec -it pyspark-app pip install --upgrade statsbombpy
 ```
+
+---
 
 ### Problema: "No space left on device"
 
 ```bash
-# Limpiar volúmenes de Docker
+# Limpiar imágenes y volúmenes no usados
 docker system prune -a --volumes
 
-# Liberar espacio en datos
+# Ver uso de disco de Docker
+docker system df
+
+# Liberar espacio en datos del proyecto
+docker exec -it pyspark-app rm -rf /app/data/processed/*
 docker exec -it pyspark-app rm -rf /app/data/checkpoints/*
+```
+
+---
+
+### Problema: Contenedores no se levantan
+
+```bash
+# Ver estado de todos los contenedores
+docker compose ps -a
+
+# Ver logs completos
+docker compose logs
+
+# Reiniciar todo el stack
+docker compose down
+docker compose up -d
+```
+
+---
+
+### Problema: Puertos ya en uso
+
+Si ves errores como "port is already allocated":
+
+```bash
+# Ver qué proceso usa el puerto (ejemplo: 8080)
+sudo lsof -i :8080
+
+# En WSL2/Linux, matar el proceso:
+sudo kill -9 <PID>
+
+# O cambiar los puertos en docker-compose.yml:
+ports:
+  - "8090:8080"  # Cambiar puerto host de 8080 a 8090
 ```
 
 ---
@@ -527,6 +623,15 @@ docker-compose down --rmi all
 
 ---
 
+## Documentación Adicional
+
+Para más detalles sobre el proyecto, consulta:
+
+- **[Quick Start Guide](docs/QUICK_START.md)** - Guía rápida de inicio
+- **[Project Summary](docs/PROJECT_SUMMARY.md)** - Resumen técnico detallado
+
+---
+
 ## Referencias
 
 - [Apache Spark Structured Streaming](https://spark.apache.org/docs/latest/structured-streaming-programming-guide.html)
@@ -545,7 +650,3 @@ Proyecto desarrollado para la asignatura **Arquitectura de Grandes Volúmenes de
 ## Licencia
 
 Este proyecto es de uso educativo. Los datos de Statsbomb están sujetos a su propia licencia.
-
----
-
-**¡Buena suerte con tu proyecto! 🚀⚽**

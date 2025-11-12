@@ -1,8 +1,9 @@
-version: '3.8'
+# Docker Compose configuration for Spark-Kafka streaming project
 
 services:
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
+    platform: linux/amd64
     hostname: zookeeper
     container_name: zookeeper
     ports:
@@ -15,6 +16,7 @@ services:
 
   kafka:
     image: confluentinc/cp-kafka:7.5.0
+    platform: linux/amd64
     hostname: kafka
     container_name: kafka
     depends_on:
@@ -38,16 +40,13 @@ services:
       - spark-network
 
   spark-master:
-    image: bitnami/spark:3.5.0
+    image: apache/spark:3.5.0
+    platform: linux/amd64
     hostname: spark-master
     container_name: spark-master
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
     environment:
-      - SPARK_MODE=master
-      - SPARK_RPC_AUTHENTICATION_ENABLED=no
-      - SPARK_RPC_ENCRYPTION_ENABLED=no
-      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
-      - SPARK_SSL_ENABLED=no
-      - SPARK_MASTER_WEBUI_PORT=8080
+      - SPARK_NO_DAEMONIZE=true
     ports:
       - "8080:8080"
       - "7077:7077"
@@ -56,20 +55,17 @@ services:
       - spark-network
 
   spark-worker:
-    image: bitnami/spark:3.5.0
+    image: apache/spark:3.5.0
+    platform: linux/amd64
     hostname: spark-worker
     container_name: spark-worker
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
     depends_on:
       - spark-master
     environment:
-      - SPARK_MODE=worker
-      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_NO_DAEMONIZE=true
       - SPARK_WORKER_MEMORY=2G
       - SPARK_WORKER_CORES=2
-      - SPARK_RPC_AUTHENTICATION_ENABLED=no
-      - SPARK_RPC_ENCRYPTION_ENABLED=no
-      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
-      - SPARK_SSL_ENABLED=no
     ports:
       - "8081:8081"
     networks:
@@ -79,6 +75,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      platforms:
+        - linux/amd64
+    platform: linux/amd64
     container_name: pyspark-app
     depends_on:
       - kafka
@@ -92,6 +91,7 @@ services:
       - ./data:/app/data
       - ./notebooks:/app/notebooks
       - ./config:/app/config
+      - ./config/spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
     working_dir: /app
     command: tail -f /dev/null  # Keep container running
     stdin_open: true
