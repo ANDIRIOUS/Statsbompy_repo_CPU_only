@@ -80,12 +80,13 @@ class MatchOutcomePredictor:
 
         return matches_df
 
-    def extract_match_features(self, match_id: int) -> dict:
+    def extract_match_features(self, match_id: int, match_info: dict = None) -> dict:
         """
         Extract features from a match for ML training
 
         Args:
             match_id: Match ID
+            match_info: Match metadata with scores
 
         Returns:
             Dictionary with match features
@@ -93,9 +94,12 @@ class MatchOutcomePredictor:
         try:
             events = sb.events(match_id=match_id)
 
-            # Get unique teams
-            teams = events['team'].apply(lambda x: x.get('name') if isinstance(x, dict) else None).unique()
-            teams = [t for t in teams if t is not None]
+            # Get unique teams (Statsbomb API now returns team as string, not dict)
+            if isinstance(events['team'].iloc[0], str):
+                teams = events['team'].unique()
+            else:
+                teams = events['team'].apply(lambda x: x.get('name') if isinstance(x, dict) else None).unique()
+                teams = [t for t in teams if t is not None]
 
             if len(teams) < 2:
                 return None
@@ -115,35 +119,27 @@ class MatchOutcomePredictor:
 
             # Calculate features for each team
             for team, prefix in [(home_team, 'home'), (away_team, 'away')]:
-                team_events = first_half[
-                    first_half['team'].apply(lambda x: x.get('name') == team if isinstance(x, dict) else False)
-                ]
+                team_events = first_half[first_half['team'] == team]
 
                 # Possession count
                 features[f'{prefix}_possession_count'] = len(team_events)
 
-                # Shots
-                shots = team_events[team_events['type'].apply(
-                    lambda x: x.get('name') == 'Shot' if isinstance(x, dict) else False
-                )]
+                # Shots (type is now a string too)
+                shots = team_events[team_events['type'] == 'Shot']
                 features[f'{prefix}_shots'] = len(shots)
 
                 # Expected Goals (xG)
-                xg_values = shots['shot'].apply(
-                    lambda x: x.get('statsbomb_xg') if isinstance(x, dict) else 0
-                )
-                features[f'{prefix}_xg'] = xg_values.sum() if len(xg_values) > 0 else 0
+                if len(shots) > 0 and 'shot_statsbomb_xg' in shots.columns:
+                    features[f'{prefix}_xg'] = shots['shot_statsbomb_xg'].sum()
+                else:
+                    features[f'{prefix}_xg'] = 0
 
                 # Passes
-                passes = team_events[team_events['type'].apply(
-                    lambda x: x.get('name') == 'Pass' if isinstance(x, dict) else False
-                )]
+                passes = team_events[team_events['type'] == 'Pass']
                 features[f'{prefix}_passes'] = len(passes)
 
-                # Completed passes
-                completed_passes = passes[passes['pass'].apply(
-                    lambda x: 'outcome' not in x if isinstance(x, dict) else False
-                )]
+                # Completed passes (pass_outcome is NaN when successful)
+                completed_passes = passes[passes['pass_outcome'].isna()]
                 features[f'{prefix}_completed_passes'] = len(completed_passes)
 
                 # Pass completion rate
@@ -153,35 +149,35 @@ class MatchOutcomePredictor:
                     features[f'{prefix}_pass_completion'] = 0
 
                 # Duels
-                duels = team_events[team_events['type'].apply(
-                    lambda x: x.get('name') == 'Duel' if isinstance(x, dict) else False
-                )]
+                duels = team_events[team_events['type'] == 'Duel']
                 features[f'{prefix}_duels'] = len(duels)
 
-                # Tackles
-                tackles = team_events[team_events['type'].apply(
-                    lambda x: x.get('name') == 'Tackle' if isinstance(x, dict) else False
-                )]
+                # Tackles (might be called 'Pressure' or 'Interception' in new API)
+                tackles = team_events[team_events['type'].isin(['Tackle', 'Interception'])]
                 features[f'{prefix}_tackles'] = len(tackles)
 
-            # Get final score from full match events
-            final_events = events[events['period'] == events['period'].max()]
+            # Get scores from match_info if available
+            if match_info is not None and (match_info.get('home_score', 0) != 0 or match_info.get('away_score', 0) != 0):
+                home_score = match_info.get('home_score', 0)
+                away_score = match_info.get('away_score', 0)
+            else:
+                # Count goals from events as fallback
+                goal_events = events[
+                    (events['type'] == 'Shot') &
+                    (events['shot_outcome'] == 'Goal')
+                ]
 
-            home_score = 0
-            away_score = 0
-
-            for _, event in final_events.iterrows():
-                if isinstance(event.get('team'), dict):
-                    team_name = event['team'].get('name')
-                    if isinstance(event.get('type'), dict) and event['type'].get('name') == 'Shot':
-                        if isinstance(event.get('shot'), dict) and event['shot'].get('outcome', {}).get('name') == 'Goal':
-                            if team_name == home_team:
-                                home_score += 1
-                            elif team_name == away_team:
-                                away_score += 1
+                home_score = len(goal_events[goal_events['team'] == home_team])
+                away_score = len(goal_events[goal_events['team'] == away_team])
 
             features['home_score'] = home_score
             features['away_score'] = away_score
+
+            # Only return features if we have a valid score (at least one team scored or it's a 0-0 draw)
+            # This ensures we have match outcome data
+            if home_score == 0 and away_score == 0:
+                # For 0-0 draws, still create the record
+                pass
 
             # Determine outcome
             if home_score > away_score:
@@ -194,7 +190,9 @@ class MatchOutcomePredictor:
             return features
 
         except Exception as e:
+            import traceback
             print(f"[ERROR] Failed to extract features for match {match_id}: {e}")
+            print(f"[DEBUG] Traceback: {traceback.format_exc()}")
             return None
 
     def prepare_training_data(self, num_matches: int = 50) -> pd.DataFrame:
@@ -217,7 +215,13 @@ class MatchOutcomePredictor:
             match_id = int(match['match_id'])
             print(f"[PROGRESS] Processing match {idx + 1}/{len(matches)}: {match_id}")
 
-            features = self.extract_match_features(match_id)
+            # Extract match info with scores (use bracket notation for pandas Series)
+            match_info = {
+                'home_score': int(match['home_score']) if 'home_score' in match and pd.notna(match['home_score']) else 0,
+                'away_score': int(match['away_score']) if 'away_score' in match and pd.notna(match['away_score']) else 0
+            }
+
+            features = self.extract_match_features(match_id, match_info)
 
             if features:
                 features_list.append(features)

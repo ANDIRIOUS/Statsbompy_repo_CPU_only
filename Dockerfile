@@ -1,20 +1,23 @@
-FROM bitnami/spark:3.5.0
+FROM python:3.11-slim-bullseye
 
-USER root
-
-# Install Python dependencies
+# Install system dependencies including Java (required for PySpark)
 RUN apt-get update && apt-get install -y \
-    python3-pip \
+    openjdk-11-jre-headless \
+    build-essential \
+    procps \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Upgrade pip
-RUN pip3 install --upgrade pip
+# Set Java environment variables
+ENV JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
+ENV PATH=$PATH:$JAVA_HOME/bin
 
 # Copy requirements file
 COPY requirements.txt /tmp/requirements.txt
 
 # Install Python packages
-RUN pip3 install --no-cache-dir -r /tmp/requirements.txt
+RUN pip3 install --upgrade pip && \
+    pip3 install --no-cache-dir -r /tmp/requirements.txt
 
 # Create app directory
 WORKDIR /app
@@ -25,5 +28,5 @@ RUN mkdir -p /app/src /app/data /app/notebooks /app/config
 # Set Python path
 ENV PYTHONPATH=/app:$PYTHONPATH
 
-# Switch back to spark user
-USER 1001
+# Default command
+CMD ["bash"]

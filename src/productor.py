@@ -111,6 +111,7 @@ class StatsbombProducer:
     def prepare_event(self, event: pd.Series) -> Dict:
         """
         Prepare event data for streaming
+        Handles both old nested and new flat Statsbomb API structures
 
         Args:
             event: Event row from DataFrame
@@ -121,12 +122,48 @@ class StatsbombProducer:
         # Convert pandas Series to dict and handle NaN values
         event_dict = event.to_dict()
 
-        # Clean up NaN values
-        for key, value in event_dict.items():
-            if pd.isna(value):
+        # Clean up NaN values and flatten nested structures
+        for key, value in list(event_dict.items()):
+            # Check for null/NaN - handle scalar and array cases safely
+            try:
+                is_null = pd.isna(value)
+                # For arrays/lists, pd.isna returns an array of booleans
+                # We only want to set to None if it's a scalar NaN
+                if hasattr(is_null, '__len__') and not isinstance(is_null, str):
+                    # It's an array of boolean values, not a single NaN
+                    is_null = False
+            except (ValueError, TypeError):
+                is_null = value is None
+
+            if is_null:
                 event_dict[key] = None
-            elif isinstance(value, (list, dict)):
-                event_dict[key] = json.loads(json.dumps(value, default=str))
+            elif isinstance(value, dict):
+                # Flatten nested dicts - extract 'name' if it exists, otherwise skip
+                # This handles old API format that might still be in cached data
+                if 'name' in value:
+                    event_dict[key] = str(value['name'])
+                else:
+                    # For other nested dicts (like shot, pass), flatten the structure
+                    for nested_key, nested_value in value.items():
+                        flat_key = f"{key}_{nested_key}"
+                        try:
+                            nested_is_null = pd.isna(nested_value)
+                            if hasattr(nested_is_null, '__len__') and not isinstance(nested_is_null, str):
+                                nested_is_null = False
+                        except (ValueError, TypeError):
+                            nested_is_null = nested_value is None
+
+                        if nested_is_null:
+                            event_dict[flat_key] = None
+                        elif isinstance(nested_value, (dict, list)):
+                            event_dict[flat_key] = json.dumps(nested_value, default=str)
+                        else:
+                            event_dict[flat_key] = nested_value
+                    # Remove the original nested dict
+                    del event_dict[key]
+            elif isinstance(value, list):
+                # Keep lists as-is (they'll be JSON serialized by Kafka producer)
+                event_dict[key] = value
 
         # Add metadata
         event_dict['_producer_timestamp'] = datetime.now().isoformat()
@@ -155,7 +192,7 @@ class StatsbombProducer:
             record_metadata = future.get(timeout=10)
 
             # Log event type and timestamp
-            event_type = event.get('type', {}).get('name', 'Unknown')
+            event_type = event.get('type', 'Unknown')
             minute = event.get('minute', 'N/A')
             second = event.get('second', 'N/A')
 

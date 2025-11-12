@@ -72,6 +72,7 @@ class StatsbombStreamProcessor:
     def get_event_schema(self) -> StructType:
         """
         Define schema for Statsbomb events
+        Updated to match the new flat structure from Statsbomb API
 
         Returns:
             StructType schema for events
@@ -85,16 +86,22 @@ class StatsbombStreamProcessor:
             StructField("second", IntegerType(), True),
             StructField("possession", IntegerType(), True),
             StructField("duration", FloatType(), True),
-            StructField("type", MapType(StringType(), StringType()), True),
-            StructField("possession_team", MapType(StringType(), StringType()), True),
-            StructField("play_pattern", MapType(StringType(), StringType()), True),
-            StructField("team", MapType(StringType(), StringType()), True),
-            StructField("player", MapType(StringType(), StringType()), True),
-            StructField("position", MapType(StringType(), StringType()), True),
+            # Changed from MapType to StringType for flat columns
+            StructField("type", StringType(), True),
+            StructField("possession_team", StringType(), True),
+            StructField("play_pattern", StringType(), True),
+            StructField("team", StringType(), True),
+            StructField("player", StringType(), True),
+            StructField("position", StringType(), True),
             StructField("location", ArrayType(FloatType()), True),
             StructField("under_pressure", BooleanType(), True),
-            StructField("pass", MapType(StringType(), StringType()), True),
-            StructField("shot", MapType(StringType(), StringType()), True),
+            # Shot and pass related fields are now flat columns
+            StructField("pass_outcome", StringType(), True),
+            StructField("pass_recipient", StringType(), True),
+            StructField("pass_length", FloatType(), True),
+            StructField("shot_statsbomb_xg", FloatType(), True),
+            StructField("shot_outcome", StringType(), True),
+            StructField("shot_type", StringType(), True),
             StructField("match_id", IntegerType(), True),
             StructField("_producer_timestamp", StringType(), True)
         ])
@@ -140,7 +147,8 @@ class StatsbombStreamProcessor:
 
     def calculate_possession(self, events_df):
         """
-        Calculate possession percentage by team using windowing
+        Calculate possession count by team using windowing
+        Note: Percentage calculation removed to avoid stream-stream join limitation
 
         Args:
             events_df: Parsed events DataFrame
@@ -150,37 +158,25 @@ class StatsbombStreamProcessor:
         """
         print("[INFO] Calculating possession statistics...")
 
-        # Extract team name from map
+        # Extract team name (new API: possession_team is a string, not a struct)
         possession_df = events_df \
             .filter(col("possession_team").isNotNull()) \
-            .withColumn("team_name", col("possession_team.name")) \
+            .withColumn("team_name", col("possession_team")) \
             .withColumn("window_time", window(col("event_timestamp"), "5 minutes"))
 
         # Count possessions per team per window
+        # Return counts instead of percentages to avoid stream-stream join
         possession_stats = possession_df \
             .groupBy("window_time", "team_name") \
-            .agg(count("*").alias("possession_count"))
-
-        # Calculate total possessions per window
-        total_possessions = possession_df \
-            .groupBy("window_time") \
-            .agg(count("*").alias("total_possessions"))
-
-        # Calculate possession percentage
-        possession_pct = possession_stats \
-            .join(total_possessions, on="window_time") \
-            .withColumn(
-                "possession_percentage",
-                (col("possession_count") / col("total_possessions") * 100)
-            ) \
+            .agg(count("*").alias("possession_count")) \
             .select(
                 col("window_time.start").alias("window_start"),
                 col("window_time.end").alias("window_end"),
                 "team_name",
-                "possession_percentage"
+                "possession_count"
             )
 
-        return possession_pct
+        return possession_stats
 
     def calculate_xg(self, events_df):
         """
@@ -194,11 +190,12 @@ class StatsbombStreamProcessor:
         """
         print("[INFO] Calculating xG statistics...")
 
-        # Extract shot data
+        # Extract shot data (new API: team and shot columns are flat, not nested)
         xg_df = events_df \
-            .filter(col("shot").isNotNull()) \
-            .withColumn("team_name", col("team.name")) \
-            .withColumn("xg_value", col("shot.statsbomb_xg").cast(FloatType())) \
+            .filter(col("type") == "Shot") \
+            .filter(col("shot_statsbomb_xg").isNotNull()) \
+            .withColumn("team_name", col("team")) \
+            .withColumn("xg_value", col("shot_statsbomb_xg").cast(FloatType())) \
             .withColumn("window_time", window(col("event_timestamp"), "5 minutes"))
 
         # Calculate average xG per team per window
@@ -232,13 +229,13 @@ class StatsbombStreamProcessor:
         """
         print("[INFO] Calculating pass completion statistics...")
 
-        # Extract pass data
+        # Extract pass data (new API: flat structure)
         pass_df = events_df \
-            .filter(col("pass").isNotNull()) \
-            .withColumn("team_name", col("team.name")) \
-            .withColumn("pass_outcome", col("pass.outcome.name")) \
+            .filter(col("type") == "Pass") \
+            .withColumn("team_name", col("team")) \
             .withColumn(
                 "is_complete",
+                # In new API, pass_outcome is null/NaN when pass is successful
                 when(col("pass_outcome").isNull(), lit(1)).otherwise(lit(0))
             ) \
             .withColumn("window_time", window(col("event_timestamp"), "5 minutes"))
@@ -268,13 +265,16 @@ class StatsbombStreamProcessor:
     def save_to_parquet(self, df, output_name: str):
         """
         Save DataFrame to Parquet format
+        Uses 'append' mode (Parquet only supports append, not update)
 
         Args:
-            df: DataFrame to save
+            df: DataFrame to save (should be non-aggregated raw events)
             output_name: Name for the output directory
         """
         output_location = f"{self.output_path}/{output_name}"
 
+        # Use 'append' mode - Parquet format only supports append
+        # Note: This should only be used for raw events, not aggregated statistics
         query = df.writeStream \
             .outputMode("append") \
             .format("parquet") \
@@ -339,18 +339,18 @@ class StatsbombStreamProcessor:
             xg_stats = self.calculate_xg(events_df)
             pass_stats = self.calculate_pass_completion(events_df)
 
-            # Display statistics
+            # Display statistics to console
+            # Note: Aggregated statistics are only displayed, not saved to Parquet
+            # because Parquet only supports 'append' mode, not the 'complete' mode
+            # required for aggregations
             possession_query = self.display_statistics(possession_stats, "Possession")
             xg_query = self.display_statistics(xg_stats, "xG")
             pass_query = self.display_statistics(pass_stats, "Pass Completion")
 
-            # Save statistics to Parquet
-            poss_parquet = self.save_to_parquet(possession_stats, "possession_stats")
-            xg_parquet = self.save_to_parquet(xg_stats, "xg_stats")
-            pass_parquet = self.save_to_parquet(pass_stats, "pass_stats")
-
             print("\n" + "="*60)
             print("[SUCCESS] All streaming queries started")
+            print("[INFO] Raw events are saved to Parquet")
+            print("[INFO] Statistics are displayed to console only")
             print("="*60 + "\n")
 
             # Wait for termination
