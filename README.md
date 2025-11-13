@@ -112,7 +112,7 @@ no_cuda/
 ### 1. Clonar el Repositorio
 
 ```bash
-git clone <repository-url>
+git clone <repository-url> noCUDA
 cd noCUDA
 ```
 
@@ -162,16 +162,16 @@ docker compose logs -f spark-worker
 
 ### Flujo Completo en 5 Pasos (Resumen)
 
-1. **Arrancar la infraestructura**
+1. **Arranca la infraestructura**
    ```bash
    docker compose up -d
    docker compose ps
    ```
-2. **Entrenar el modelo** dentro del contenedor `pyspark-app`
+2. **Entrena el modelo** dentro de `pyspark-app`
    ```bash
    docker exec -it pyspark-app bash -lc "python src/entrenamiento_ml.py"
    ```
-3. **Iniciar el consumidor de streaming** (nueva terminal)
+3. **Lanza el consumidor de streaming** en una terminal aparte
    ```bash
    docker exec -it pyspark-app bash
    spark-submit \
@@ -179,16 +179,16 @@ docker compose logs -f spark-worker
      --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0 \
      src/procesador_streaming.py
    ```
-4. **Lanzar el productor Kafka** (tercera terminal)
+4. **Ejecuta el productor Kafka** en una tercera terminal
    ```bash
    docker exec -it pyspark-app bash -lc "python src/productor.py"
    ```
-5. **Monitorear resultados**
-   - Consola del consumidor (estadísticas en vivo)
+5. **Monitorea**:
+   - Consola del consumidor (tablas en vivo)
    - Spark UI del driver: http://localhost:4041
    - Spark Master UI: http://localhost:8080
 
-> El consumidor crea/abre automáticamente `/app/data/checkpoints` y `/app/data/processed` con permisos amplios antes de iniciar, por lo que no es necesario preparar manualmente esas carpetas.
+> El consumidor comprueba y crea las rutas `/app/data/checkpoints` y `/app/data/processed` con permisos abiertos antes de iniciar los queries, evitando errores de permisos entre el driver (root) y los ejecutores (`spark`).
 
 ### Paso 1: Entrenar el Modelo de Machine Learning
 
@@ -233,12 +233,12 @@ Este script:
 3. Calcula estadísticas en tiempo real
 4. Guarda datos en Parquet
 5. Muestra estadísticas en consola
-6. **Verifica y crea** las rutas `/app/data/checkpoints` y `/app/data/processed` con permisos `0777` antes de arrancar los queries, evitando errores de permisos entre el driver (root) y los ejecutores (`spark`).
+6. Verifica/crea ` /app/data/checkpoints` y `/app/data/processed` con permisos amplios antes de iniciar
 
 **Acceder a la Spark UI**:
 - Abrir navegador en: **http://localhost:4041**
 - Esta interfaz muestra métricas en tiempo real
-> Nota: el puerto 4041 del host está mapeado al 4040 interno del driver dentro de `pyspark-app`. Ajusta `docker-compose.yml` si ya usas ese puerto.
+> Nota: el puerto 4041 del host se mapea al 4040 interno del driver dentro de `pyspark-app`. Cambia el puerto en `docker-compose.yml` si ya lo utilizas.
 
 ---
 
@@ -274,12 +274,12 @@ Este script:
 Verás tablas actualizándose con estadísticas como:
 
 ```
-+-------------------+-------------------+-----------------+-----------------+
-|window_start       |window_end         |team_name        |possession_count |
-+-------------------+-------------------+-----------------+-----------------+
-|2025-11-11 10:00:00|2025-11-11 10:05:00|Barcelona        |125              |
-|2025-11-11 10:00:00|2025-11-11 10:05:00|Real Madrid      |75               |
-+-------------------+-------------------+-----------------+-----------------+
++-------------------+-------------------+-----------+--------------------+
+|window_start       |window_end         |team_name  |possession_percentage|
++-------------------+-------------------+-----------+--------------------+
+|2025-11-11 10:00:00|2025-11-11 10:05:00|Barcelona  |62.5                |
+|2025-11-11 10:00:00|2025-11-11 10:05:00|Real Madrid|37.5                |
++-------------------+-------------------+-----------+--------------------+
 ```
 
 #### En la Spark UI (http://localhost:4041):
