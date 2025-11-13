@@ -141,7 +141,7 @@ docker compose ps
 - `kafka` → Puerto 9092
 - `spark-master` → Puertos 7077, 8080, 4040
 - `spark-worker` → Puerto 8081
-- `pyspark-app` → Contenedor de aplicación
+- `pyspark-app` → Puertos 8888 (Jupyter) y 4041 (Spark UI del driver)
 
 ### 4. Verificar el Estado de los Servicios
 
@@ -159,6 +159,36 @@ docker compose logs -f spark-worker
 ---
 
 ## Uso del Sistema
+
+### Flujo Completo en 5 Pasos (Resumen)
+
+1. **Arrancar la infraestructura**
+   ```bash
+   docker compose up -d
+   docker compose ps
+   ```
+2. **Entrenar el modelo** dentro del contenedor `pyspark-app`
+   ```bash
+   docker exec -it pyspark-app bash -lc "python src/entrenamiento_ml.py"
+   ```
+3. **Iniciar el consumidor de streaming** (nueva terminal)
+   ```bash
+   docker exec -it pyspark-app bash
+   spark-submit \
+     --master spark://spark-master:7077 \
+     --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0 \
+     src/procesador_streaming.py
+   ```
+4. **Lanzar el productor Kafka** (tercera terminal)
+   ```bash
+   docker exec -it pyspark-app bash -lc "python src/productor.py"
+   ```
+5. **Monitorear resultados**
+   - Consola del consumidor (estadísticas en vivo)
+   - Spark UI del driver: http://localhost:4041
+   - Spark Master UI: http://localhost:8080
+
+> El consumidor crea/abre automáticamente `/app/data/checkpoints` y `/app/data/processed` con permisos amplios antes de iniciar, por lo que no es necesario preparar manualmente esas carpetas.
 
 ### Paso 1: Entrenar el Modelo de Machine Learning
 
@@ -203,10 +233,12 @@ Este script:
 3. Calcula estadísticas en tiempo real
 4. Guarda datos en Parquet
 5. Muestra estadísticas en consola
+6. **Verifica y crea** las rutas `/app/data/checkpoints` y `/app/data/processed` con permisos `0777` antes de arrancar los queries, evitando errores de permisos entre el driver (root) y los ejecutores (`spark`).
 
 **Acceder a la Spark UI**:
-- Abrir navegador en: **http://localhost:4040**
+- Abrir navegador en: **http://localhost:4041**
 - Esta interfaz muestra métricas en tiempo real
+> Nota: el puerto 4041 del host está mapeado al 4040 interno del driver dentro de `pyspark-app`. Ajusta `docker-compose.yml` si ya usas ese puerto.
 
 ---
 
@@ -250,7 +282,7 @@ Verás tablas actualizándose con estadísticas como:
 +-------------------+-------------------+-----------------+-----------------+
 ```
 
-#### En la Spark UI (http://localhost:4040):
+#### En la Spark UI (http://localhost:4041):
 
 - **Jobs**: Ver jobs ejecutándose
 - **Stages**: Detalles de cada stage
@@ -273,7 +305,7 @@ Este proyecto permite comparar el rendimiento del mismo código en diferentes m�
 
 ### Métricas a Capturar
 
-#### 1. Desde la Spark UI (http://localhost:4040)
+#### 1. Desde la Spark UI (http://localhost:4041)
 
 **Jobs Tab**:
 - [ ] Tiempo total de ejecución de cada job
