@@ -49,6 +49,20 @@ class StatsbombStreamProcessor:
         self.spark = None
         self.model = None
 
+    def ensure_storage_paths(self):
+        """
+        Make sure checkpoint/output directories exist and are writable
+        so Spark executors (running as a different user) can update them.
+        """
+        for path in (self.checkpoint_location, self.output_path):
+            if not path:
+                continue
+            try:
+                os.makedirs(path, exist_ok=True)
+                os.chmod(path, 0o777)
+            except OSError as exc:
+                print(f"[WARNING] Could not prepare storage path {path}: {exc}")
+
     def create_spark_session(self) -> SparkSession:
         """Create and configure Spark session"""
         print("[INFO] Creating Spark session...")
@@ -59,6 +73,7 @@ class StatsbombStreamProcessor:
             .config("spark.sql.shuffle.partitions", "4") \
             .config("spark.streaming.stopGracefullyOnShutdown", "true") \
             .config("spark.sql.streaming.statefulOperator.checkCorrectness.enabled", "false") \
+            .config("spark.hadoop.fs.permissions.umask-mode", "000") \
             .getOrCreate()
 
         spark.sparkContext.setLogLevel("WARN")
@@ -319,6 +334,9 @@ class StatsbombStreamProcessor:
     def run(self):
         """Main execution method"""
         try:
+            # Ensure filesystem locations exist before Spark touches them
+            self.ensure_storage_paths()
+
             # Create Spark session
             self.create_spark_session()
 
