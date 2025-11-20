@@ -15,6 +15,8 @@ from pyspark.sql.types import (
     FloatType, BooleanType, ArrayType, MapType, TimestampType
 )
 import joblib
+import pandas as pd
+from utils.inference import create_predictor
 
 
 class StatsbombStreamProcessor:
@@ -48,6 +50,7 @@ class StatsbombStreamProcessor:
         self.model_path = model_path
         self.spark = None
         self.model = None
+        self.predictor = None
 
     def ensure_storage_paths(self):
         """
@@ -323,13 +326,202 @@ class StatsbombStreamProcessor:
         if self.model_path and os.path.exists(self.model_path):
             print(f"[INFO] Loading ML model from {self.model_path}")
             try:
-                self.model = joblib.load(self.model_path)
-                print("[SUCCESS] ML model loaded successfully")
+                scaler_path = self.model_path.replace("modelo.joblib", "scaler.joblib")
+                feature_names_path = self.model_path.replace("modelo.joblib", "feature_names.joblib")
+                self.predictor = create_predictor(
+                    model_path=self.model_path,
+                    scaler_path=scaler_path,
+                    feature_names_path=feature_names_path
+                )
+                if self.predictor:
+                    print("[SUCCESS] ML predictor loaded successfully")
+                else:
+                    print("[WARNING] Failed to create predictor")
             except Exception as e:
                 print(f"[WARNING] Failed to load model: {e}")
-                self.model = None
+                self.predictor = None
         else:
             print("[INFO] No ML model specified or found")
+
+    def make_predictions_batch(self, batch_df, batch_id):
+        """
+        Process a micro-batch and make predictions
+        This is called by foreachBatch for each batch of aggregated statistics
+
+        Args:
+            batch_df: Spark DataFrame with aggregated statistics
+            batch_id: Batch ID
+        """
+        if self.predictor is None:
+            return
+
+        try:
+            # Convert Spark DataFrame to Pandas for processing
+            pandas_df = batch_df.toPandas()
+
+            if pandas_df.empty:
+                return
+
+            # Extract features and make prediction
+            prediction, probabilities = self.predictor.predict(pandas_df)
+
+            # Get team names if available
+            teams = pandas_df.get('team_name', pd.Series(['Home', 'Away'])).unique()
+            home_team = teams[0] if len(teams) > 0 else "Home"
+            away_team = teams[1] if len(teams) > 1 else "Away"
+
+            # Format and display prediction
+            prediction_str = self.predictor.format_prediction(
+                prediction,
+                probabilities,
+                home_team=home_team,
+                away_team=away_team
+            )
+
+            print(prediction_str)
+
+        except Exception as e:
+            print(f"[WARNING] Prediction failed for batch {batch_id}: {e}")
+
+    def display_statistics_with_predictions(self, df, stat_name: str):
+        """
+        Display statistics to console and trigger predictions
+
+        Args:
+            df: DataFrame with statistics
+            stat_name: Name of the statistic
+        """
+        query = df.writeStream \
+            .outputMode("complete") \
+            .format("console") \
+            .option("truncate", False) \
+            .option("numRows", 20) \
+            .start()
+
+        print(f"[INFO] Displaying {stat_name} statistics")
+        return query
+
+    def combine_stats_for_prediction(self, batch_df, batch_id):
+        """
+        Combine statistics from all sources and make a prediction
+        This is called by foreachBatch for combined statistics
+
+        Args:
+            batch_df: Combined Spark DataFrame with all statistics
+            batch_id: Batch ID
+        """
+        if self.predictor is None:
+            return
+
+        try:
+            # Convert to pandas
+            pandas_df = batch_df.toPandas()
+
+            if pandas_df.empty or len(pandas_df) < 2:
+                return
+
+            # Extract features using the predictor's method
+            # We need to reshape the data - currently it's one row per team
+            # but predictor expects features in specific format
+
+            # Get unique teams
+            teams = pandas_df['team_name'].unique()
+            if len(teams) < 2:
+                return
+
+            home_team = teams[0]
+            away_team = teams[1]
+
+            # Build features dictionary
+            features = {}
+
+            for team, prefix in [(home_team, 'home'), (away_team, 'away')]:
+                team_data = pandas_df[pandas_df['team_name'] == team].iloc[0]
+
+                # Possession
+                features[f'{prefix}_possession_count'] = team_data.get('possession_count', 0)
+
+                # xG and shots
+                features[f'{prefix}_xg'] = team_data.get('total_xg', 0)
+                features[f'{prefix}_shots'] = team_data.get('shots_count', 0)
+
+                # Passes
+                features[f'{prefix}_passes'] = team_data.get('total_passes', 0)
+                features[f'{prefix}_completed_passes'] = team_data.get('completed_passes', 0)
+                features[f'{prefix}_pass_completion'] = team_data.get('pass_completion_pct', 0) / 100
+
+                # Defaults for missing features
+                features[f'{prefix}_duels'] = 0
+                features[f'{prefix}_tackles'] = 0
+
+            # Create features DataFrame
+            features_df = pd.DataFrame([features])
+
+            # Make prediction
+            prediction, probabilities = self.predictor.predict(features_df)
+
+            # Format and display prediction
+            prediction_str = self.predictor.format_prediction(
+                prediction,
+                probabilities,
+                home_team=home_team,
+                away_team=away_team
+            )
+
+            print(prediction_str)
+
+        except Exception as e:
+            import traceback
+            print(f"[WARNING] Prediction failed for batch {batch_id}: {e}")
+            print(f"[DEBUG] Traceback: {traceback.format_exc()}")
+
+    def create_combined_stats_stream(self, events_df):
+        """
+        Create a single stream that combines all statistics for predictions
+
+        Args:
+            events_df: Parsed events DataFrame
+
+        Returns:
+            Combined statistics DataFrame
+        """
+        print("[INFO] Creating combined statistics stream for predictions...")
+
+        # Create a windowed aggregation that combines all stats
+        windowed_events = events_df \
+            .withColumn("window_time", window(col("event_timestamp"), "5 minutes"))
+
+        # Combine all stats in one aggregation
+        combined_stats = windowed_events \
+            .withColumn("team_name", col("team")) \
+            .groupBy("window_time", "team_name") \
+            .agg(
+                # Possession
+                count("*").alias("possession_count"),
+                # Shots and xG
+                _sum(when(col("type") == "Shot", 1).otherwise(0)).alias("shots_count"),
+                _sum(when(col("type") == "Shot", col("shot_statsbomb_xg")).otherwise(0)).alias("total_xg"),
+                # Passes
+                _sum(when(col("type") == "Pass", 1).otherwise(0)).alias("total_passes"),
+                _sum(when((col("type") == "Pass") & col("pass_outcome").isNull(), 1).otherwise(0)).alias("completed_passes")
+            ) \
+            .withColumn(
+                "pass_completion_pct",
+                when(col("total_passes") > 0, (col("completed_passes") / col("total_passes") * 100)).otherwise(0)
+            ) \
+            .select(
+                col("window_time.start").alias("window_start"),
+                col("window_time.end").alias("window_end"),
+                "team_name",
+                "possession_count",
+                "shots_count",
+                "total_xg",
+                "total_passes",
+                "completed_passes",
+                "pass_completion_pct"
+            )
+
+        return combined_stats
 
     def run(self):
         """Main execution method"""
@@ -365,10 +557,24 @@ class StatsbombStreamProcessor:
             xg_query = self.display_statistics(xg_stats, "xG")
             pass_query = self.display_statistics(pass_stats, "Pass Completion")
 
+            # Create combined statistics stream for predictions
+            if self.predictor is not None:
+                combined_stats = self.create_combined_stats_stream(events_df)
+
+                # Use foreachBatch to make predictions on each batch
+                prediction_query = combined_stats.writeStream \
+                    .outputMode("complete") \
+                    .foreachBatch(self.combine_stats_for_prediction) \
+                    .start()
+
+                print("[INFO] Real-time predictions enabled")
+
             print("\n" + "="*60)
             print("[SUCCESS] All streaming queries started")
             print("[INFO] Raw events are saved to Parquet")
             print("[INFO] Statistics are displayed to console only")
+            if self.predictor is not None:
+                print("[INFO] ML predictions will be shown every 5 minutes")
             print("="*60 + "\n")
 
             # Wait for termination

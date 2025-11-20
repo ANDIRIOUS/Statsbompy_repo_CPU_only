@@ -13,34 +13,55 @@ from typing import Dict, Optional, Tuple
 class MatchPredictor:
     """Real-time match outcome predictor"""
 
-    def __init__(self, model_path: str, scaler_path: str):
+    def __init__(self, model_path: str, scaler_path: str, feature_names_path: str = None):
         """
         Initialize predictor with trained model
 
         Args:
             model_path: Path to trained model file
             scaler_path: Path to scaler file
+            feature_names_path: Path to feature names file (optional)
         """
         self.model = None
         self.scaler = None
         self.feature_columns = None
 
         if os.path.exists(model_path) and os.path.exists(scaler_path):
-            self.load_model(model_path, scaler_path)
+            self.load_model(model_path, scaler_path, feature_names_path)
 
-    def load_model(self, model_path: str, scaler_path: str):
+    def load_model(self, model_path: str, scaler_path: str, feature_names_path: str = None):
         """
         Load trained model and scaler
 
         Args:
             model_path: Path to model file
             scaler_path: Path to scaler file
+            feature_names_path: Path to feature names file (optional)
         """
         try:
             self.model = joblib.load(model_path)
             self.scaler = joblib.load(scaler_path)
             print(f"[SUCCESS] Model loaded from {model_path}")
             print(f"[SUCCESS] Scaler loaded from {scaler_path}")
+
+            # Load feature names if available
+            if feature_names_path and os.path.exists(feature_names_path):
+                self.feature_columns = joblib.load(feature_names_path)
+                print(f"[SUCCESS] Feature names loaded from {feature_names_path}")
+            elif hasattr(self.scaler, 'feature_names_in_'):
+                self.feature_columns = list(self.scaler.feature_names_in_)
+                print(f"[INFO] Feature names extracted from scaler")
+            else:
+                # Default feature order
+                self.feature_columns = [
+                    'home_possession_count', 'home_shots', 'home_xg',
+                    'home_passes', 'home_completed_passes', 'home_pass_completion',
+                    'home_duels', 'home_tackles',
+                    'away_possession_count', 'away_shots', 'away_xg',
+                    'away_passes', 'away_completed_passes', 'away_pass_completion',
+                    'away_duels', 'away_tackles'
+                ]
+                print(f"[INFO] Using default feature order")
         except Exception as e:
             print(f"[ERROR] Failed to load model: {e}")
             raise
@@ -130,23 +151,25 @@ class MatchPredictor:
             raise ValueError("Model not loaded")
 
         try:
-            # Ensure all required features are present
-            feature_cols = [
-                'home_possession_count', 'away_possession_count',
-                'home_shots', 'away_shots',
-                'home_xg', 'away_xg',
-                'home_passes', 'away_passes',
-                'home_completed_passes', 'away_completed_passes',
-                'home_pass_completion', 'away_pass_completion',
-                'home_duels', 'away_duels',
-                'home_tackles', 'away_tackles'
-            ]
+            # Use stored feature columns order or default
+            if self.feature_columns is None:
+                feature_cols = [
+                    'home_possession_count', 'home_shots', 'home_xg',
+                    'home_passes', 'home_completed_passes', 'home_pass_completion',
+                    'home_duels', 'home_tackles',
+                    'away_possession_count', 'away_shots', 'away_xg',
+                    'away_passes', 'away_completed_passes', 'away_pass_completion',
+                    'away_duels', 'away_tackles'
+                ]
+            else:
+                feature_cols = self.feature_columns
 
             # Fill missing features with 0
             for col in feature_cols:
                 if col not in features_df.columns:
                     features_df[col] = 0
 
+            # IMPORTANT: Select columns in the exact order they were during training
             X = features_df[feature_cols].fillna(0)
 
             # Scale features
@@ -212,7 +235,8 @@ class MatchPredictor:
 
 def create_predictor(
     model_path: str = "/app/data/models/modelo.joblib",
-    scaler_path: str = "/app/data/models/scaler.joblib"
+    scaler_path: str = "/app/data/models/scaler.joblib",
+    feature_names_path: str = "/app/data/models/feature_names.joblib"
 ) -> Optional[MatchPredictor]:
     """
     Factory function to create predictor instance
@@ -220,13 +244,14 @@ def create_predictor(
     Args:
         model_path: Path to model file
         scaler_path: Path to scaler file
+        feature_names_path: Path to feature names file
 
     Returns:
         MatchPredictor instance or None if model not found
     """
     if os.path.exists(model_path) and os.path.exists(scaler_path):
         try:
-            return MatchPredictor(model_path, scaler_path)
+            return MatchPredictor(model_path, scaler_path, feature_names_path)
         except Exception as e:
             print(f"[ERROR] Failed to create predictor: {e}")
             return None

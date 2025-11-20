@@ -326,11 +326,30 @@ class MatchOutcomePredictor:
         joblib.dump(self.scaler, scaler_path)
         print(f"[SUCCESS] Scaler saved to {scaler_path}")
 
+        # Save feature names for inference
+        if hasattr(self.scaler, 'feature_names_in_'):
+            feature_names = list(self.scaler.feature_names_in_)
+        else:
+            # Fallback: standard feature order
+            feature_names = [
+                'home_possession_count', 'home_shots', 'home_xg',
+                'home_passes', 'home_completed_passes', 'home_pass_completion',
+                'home_duels', 'home_tackles',
+                'away_possession_count', 'away_shots', 'away_xg',
+                'away_passes', 'away_completed_passes', 'away_pass_completion',
+                'away_duels', 'away_tackles'
+            ]
+
+        feature_names_path = self.model_output_path / "feature_names.joblib"
+        joblib.dump(feature_names, feature_names_path)
+        print(f"[SUCCESS] Feature names saved to {feature_names_path}")
+
         # Save metadata
         metadata = {
             'timestamp': datetime.now().isoformat(),
             'model_type': type(self.model).__name__,
-            'classes': list(self.model.classes_)
+            'classes': list(self.model.classes_),
+            'feature_names': feature_names
         }
 
         metadata_path = self.model_output_path / "model_metadata.joblib"
