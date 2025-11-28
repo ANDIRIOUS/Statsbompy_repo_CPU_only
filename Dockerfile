@@ -1,29 +1,23 @@
-FROM bitnami/spark:3.5.0
+FROM python:3.10-slim
 
-USER root
+# Install Java (required for Spark)
+RUN apt-get update && \
+    apt-get install -y default-jdk procps && \
+    apt-get clean;
+
+# Set JAVA_HOME
+ENV JAVA_HOME=/usr/lib/jvm/default-java
 
 # Install Python dependencies
-RUN apt-get update && apt-get install -y \
-    python3-pip \
-    && rm -rf /var/lib/apt/lists/*
-
-# Upgrade pip
-RUN pip3 install --upgrade pip
-
-# Copy requirements file
-COPY requirements.txt /tmp/requirements.txt
-
-# Install Python packages
-RUN pip3 install --no-cache-dir -r /tmp/requirements.txt
-
-# Create app directory
+COPY requirements.txt /app/requirements.txt
 WORKDIR /app
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Create necessary directories
-RUN mkdir -p /app/src /app/data /app/notebooks /app/config
+# Copy source code
+COPY src /app/src
 
-# Set Python path
-ENV PYTHONPATH=/app:$PYTHONPATH
+# Expose Spark UI port
+EXPOSE 4040
 
-# Switch back to spark user
-USER 1001
+# Default command (can be overridden)
+CMD ["python3", "src/productor.py"]

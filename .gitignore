@@ -233,3 +233,9 @@ kafka-logs/
 # Jupyter notebook outputs (keep notebooks, ignore outputs)
 *.ipynb
 !notebooks/*.ipynb
+
+data/processed/events_raw
+data/checkpoint/commits
+data/checkpoint/offsets
+data/model/metadata
+data/*
