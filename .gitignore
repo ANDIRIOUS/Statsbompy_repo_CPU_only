@@ -234,4 +234,8 @@ kafka-logs/
 *.ipynb
 !notebooks/*.ipynb
 
-data/processed/events_raw/
+data/processed/events_raw
+data/checkpoint/commits
+data/checkpoint/offsets
+data/model/metadata
+data/*

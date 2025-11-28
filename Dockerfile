@@ -1,32 +1,23 @@
-FROM python:3.11-slim-bullseye
+FROM python:3.10-slim
 
-# Install system dependencies including Java (required for PySpark)
-RUN apt-get update && apt-get install -y \
-    openjdk-11-jre-headless \
-    build-essential \
-    procps \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+# Install Java (required for Spark)
+RUN apt-get update && \
+    apt-get install -y default-jdk procps && \
+    apt-get clean;
 
-# Set Java environment variables
-ENV JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
-ENV PATH=$PATH:$JAVA_HOME/bin
+# Set JAVA_HOME
+ENV JAVA_HOME=/usr/lib/jvm/default-java
 
-# Copy requirements file
-COPY requirements.txt /tmp/requirements.txt
-
-# Install Python packages
-RUN pip3 install --upgrade pip && \
-    pip3 install --no-cache-dir -r /tmp/requirements.txt
-
-# Create app directory
+# Install Python dependencies
+COPY requirements.txt /app/requirements.txt
 WORKDIR /app
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Create necessary directories
-RUN mkdir -p /app/src /app/data /app/notebooks /app/config
+# Copy source code
+COPY src /app/src
 
-# Set Python path
-ENV PYTHONPATH=/app:$PYTHONPATH
+# Expose Spark UI port
+EXPOSE 4040
 
-# Default command
-CMD ["bash"]
+# Default command (can be overridden)
+CMD ["python3", "src/productor.py"]
