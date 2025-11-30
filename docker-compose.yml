@@ -39,7 +39,7 @@ services:
     command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
     depends_on:
       - spark-master
-    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+
     environment:
       - SPARK_WORKER_MEMORY=2G
       - SPARK_WORKER_CORES=2

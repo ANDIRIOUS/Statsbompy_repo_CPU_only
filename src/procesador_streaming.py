@@ -48,6 +48,10 @@ schema = StructType([
 def process_batch(df, epoch_id):
     print(f"Processing batch {epoch_id}...")
     
+    # 0. Visualize Raw Events (Real-time)
+    print("=== Incoming Events ===")
+    df.select("period", "timestamp", "type", "team", "player", "shot_statsbomb_xg").show(truncate=False)
+    
     # 1. Calculate Statistics (Batch Level)
     stats = df.groupBy("team").agg(
         count("*").alias("event_count"),
@@ -107,6 +111,7 @@ def main():
         .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP_SERVERS) \
         .option("subscribe", KAFKA_TOPIC) \
         .option("startingOffsets", "earliest") \
+        .option("failOnDataLoss", "false") \
         .load()
     
     # Parse JSON
