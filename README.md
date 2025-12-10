@@ -16,36 +16,52 @@ This project simulates a real-time Big Data architecture using Spark Structured 
 
 ## Setup & Execution
 
+### Quick Start (Recommended)
+Use the provided scripts in `scripts/` for easy execution:
+
+1.  **Start Services**:
+    ```bash
+    docker-compose up -d --build
+    ```
+    Wait for `spark-worker-1` and `spark-worker-2` to be ready.
+
+2.  **Run Training (Distributed)**:
+    This script submits the job to the Spark Cluster (2 Workers):
+    ```bash
+    bash scripts/train_model.sh
+    ```
+
+### Manual Execution
+
 1.  **Build and Start Services**
     ```bash
     docker-compose up --build
     ```
-    Wait for all services to be up (Kafka, Spark Master/Worker).
+    Verify that `spark-worker-1` and `spark-worker-2` are running.
 
 2.  **Access the App Container**
-    Open a new terminal:
     ```bash
     docker exec -it spark-app bash
     ```
 
-3.  **Run the Producer** (in the app container or another terminal)
+3.  **Run the Producer** (in the app container)
     ```bash
     python3 src/productor.py
     ```
-    This will start sending events to the `statsbomb-eventos` topic.
 
 4.  **Run the Streaming Processor** (in the app container)
     ```bash
     spark-submit --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0 src/procesador_streaming.py
     ```
-    You will see batch statistics in the console. Data is being saved to `data/raw_events`.
 
 5.  **Train the ML Model**
-    After running the stream for a while (so data is collected), stop the stream (Ctrl+C) and run:
+    To train using the cluster (ensure data is collected properly first):
     ```bash
-    spark-submit src/entrenamiento_ml.py
+    /usr/local/bin/spark-submit \
+      --master spark://spark-master:7077 \
+      src/entrenamiento_ml.py
     ```
-    This will save the model to `data/model`.
+    This will save the model to `data/model` (Spark ML format).
 
 6.  **Run Inference**
     Start the streaming processor again. It will now detect the model and output predictions.
