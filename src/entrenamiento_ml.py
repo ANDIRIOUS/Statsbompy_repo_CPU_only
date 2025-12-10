@@ -9,8 +9,10 @@ INPUT_PATH = "/app/data/raw_events"
 MODEL_PATH = "/app/data/model"
 
 def get_spark_session():
+    master_url = os.getenv("SPARK_MASTER_URL", "local[*]")
     return SparkSession.builder \
         .appName("StatsbombMLTraining") \
+        .master(master_url) \
         .getOrCreate()
 
 def main():
