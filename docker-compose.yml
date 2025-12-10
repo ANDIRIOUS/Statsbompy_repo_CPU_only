@@ -2,108 +2,61 @@
 
 services:
   zookeeper:
-    image: confluentinc/cp-zookeeper:7.5.0
-    platform: linux/amd64
-    hostname: zookeeper
+    image: confluentinc/cp-zookeeper:7.4.0
     container_name: zookeeper
-    ports:
-      - "2181:2181"
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
-    networks:
-      - spark-network
+    ports:
+      - "2181:2181"
 
   kafka:
-    image: confluentinc/cp-kafka:7.5.0
-    platform: linux/amd64
-    hostname: kafka
+    image: confluentinc/cp-kafka:7.4.0
     container_name: kafka
     depends_on:
       - zookeeper
     ports:
       - "9092:9092"
-      - "9101:9101"
     environment:
       KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      KAFKA_JMX_PORT: 9101
-      KAFKA_JMX_HOSTNAME: localhost
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
-    networks:
-      - spark-network
 
   spark-master:
     image: apache/spark:3.5.0
-    platform: linux/amd64
-    hostname: spark-master
     container_name: spark-master
     command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
-    environment:
-      - SPARK_NO_DAEMONIZE=true
     ports:
       - "8080:8080"
       - "7077:7077"
-      - "4040:4040"
-    networks:
-      - spark-network
 
   spark-worker:
     image: apache/spark:3.5.0
-    platform: linux/amd64
-    hostname: spark-worker
     container_name: spark-worker
     command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
     depends_on:
       - spark-master
+
     environment:
-      - SPARK_NO_DAEMONIZE=true
       - SPARK_WORKER_MEMORY=2G
       - SPARK_WORKER_CORES=2
-    volumes:
-      - ./data:/app/data
-    ports:
-      - "8081:8081"
-    networks:
-      - spark-network
 
-  pyspark-app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      platforms:
-        - linux/amd64
-    platform: linux/amd64
-    container_name: pyspark-app
+  spark-app:
+    build: .
+    container_name: spark-app
     depends_on:
       - kafka
       - spark-master
-      - spark-worker
-    environment:
-      - SPARK_MASTER=spark://spark-master:7077
-      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
     volumes:
       - ./src:/app/src
       - ./data:/app/data
       - ./notebooks:/app/notebooks
-      - ./config:/app/config
-      - ./config/spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
-    working_dir: /app
-    command: tail -f /dev/null  # Keep container running
-    stdin_open: true
-    tty: true
-    networks:
-      - spark-network
+    environment:
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
     ports:
-      - "8888:8888"  # Jupyter notebook port
-      - "4041:4040"  # Spark driver UI (maps container 4040 -> host 4041)
-
-networks:
-  spark-network:
-    driver: bridge
+      - "4040:4040"
+    command: tail -f /dev/null
